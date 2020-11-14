@@ -1,24 +1,17 @@
 import time
 from flask import Flask,Response,request,jsonify
 import ee
+import json
 # from constants import THAILAND_BOUNDS,COLLECTION_NAME
 import sys
 
 FEARURE_COLLECTION = 'USDOS/LSIB_SIMPLE/2017'
-IMAGE_COLLECTION = ""
 VIS_PARAMS = {
   "bands": ['B4', 'B3', 'B2'],
   "min": 0,
   "max": 3000,
   "gamma": 1.4,
 };
-
-# def maskL8sr(image):
-#     cloudShadowBitMask = (1 << 3);
-#     cloudsBitMask = (1 << 5);
-#     qa = image.select('pixel_qa');
-#     mask = qa.bitwiseAnd(cloudShadowBitMask)
-#     return image.updateMask(mask);
 
 def init_ggee():
     try:
@@ -84,30 +77,49 @@ def map_landsat_properties(img):
         "SENSING_TIME":SENSING_TIME
     })
 
+def check_thailand_intersect_polygon(feature,geometry):
+    contain = feature.contains(geometry)
+    return ee.Feature(None,{"contain":contain})
+
+"""
+RESPONSE CODE
+200 - OK
+500 - INTERNAL ERROR
+422 - INVALID INPUT
+"""
+
 if __name__ == "__main__":
     app = Flask(__name__)
     init_ggee() # try to initialize earth engine
-    THAILAND_GEOM = ee.FeatureCollection('USDOS/LSIB_SIMPLE/2017').filterMetadata('country_co', 'equals', 'TH') # geometry of THAILAND_GEOM
-    @app.route("/api/v1/get/landsat/data",methods=["POST"])
+    THAILAND_GEOM = ee.FeatureCollection(FEARURE_COLLECTION).filterMetadata('country_co', 'equals', 'TH') # geometry of THAILAND_GEOM
+    @app.route("/api/v1/th/get/landsatData",methods=["POST"])
     def get_data_from_sat():
         try:
             geo_json = request.form.get("geo_json")
             start_date = request.form.get("start_date")
             end_date = request.form.get("end_date")
-            try:
-                geom_type,coordinates = geo_json["type"] ,geo_json["coordinates"]
-            except:
-                geom_type,coordinates = "polygon",[ [104.16229248046878,15.234660503970465],
-                        [103.96453857421878,14.945606703561904],
-                        [104.08538818359378,14.746489691641484],
-                        [104.59899902343753,14.746489691641484],
-                        [105.01373291015628,15.025201961847722],
-                        [104.80499267578128,15.32739214993129],
-                        [104.65942382812503,15.369770078523104],
-                        [104.16229248046878,15.234660503970465]]
-            polygon_region = ee.Geometry.Polygon(coordinates) #
+            if isinstance(geo_json,str):
+                geo_json = json.loads(geo_json)
+            geom_type = geo_json["type"]
+            coordinates = geo_json["coordinates"]
+            geoJSON_polygon = ee.Geometry.Polygon(coordinates) # Create polygon from geoJSON
+            # Check if the polygon is in Thailand or not
+            # if not return code 500 and raise error
+            features = THAILAND_GEOM.map(lambda feature:check_thailand_intersect_polygon(feature,geoJSON_polygon))
+            features_size = features.size()
+            features = features.toList(features_size)
+            features_list = features.getInfo()
+            polygon_in_thailand = True
+            print(features_list)
+            for r in features_list:
+                contain = r["properties"]["contain"]
+                polygon_in_thailand &= contain
+            if not polygon_in_thailand:
+                print("POLYGON IS NOT IN THAILAND")
+                return jsonify({"message":"Your Input polygon is not in thailand.Please try again."}), 422
+            print("POLYGON IS IN THAILAND")
             dataset = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')\
-                  .filterBounds(polygon_region)\
+                    .filterBounds(geoJSON_polygon)\
                   .filterDate(start_date, end_date)
             results = dataset.map(lambda img: map_landsat_properties(img))
             collection_size = results.size()
