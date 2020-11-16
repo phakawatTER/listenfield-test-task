@@ -4,8 +4,11 @@ import ee
 import json
 # from constants import THAILAND_BOUNDS,COLLECTION_NAME
 import sys
+# import os
+
 
 FEARURE_COLLECTION = 'USDOS/LSIB_SIMPLE/2017'
+IMAGE_COLLECTION = 'LANDSAT/LC08/C01/T1_SR'
 VIS_PARAMS = {
   "bands": ['B4', 'B3', 'B2'],
   "min": 0,
@@ -13,18 +16,8 @@ VIS_PARAMS = {
   "gamma": 1.4,
 };
 
-def init_ggee():
-    try:
-        ee.Initialize()
-        print("Google Earth Engine has successfully initialized!")
-    except ee.EEException:
-        print("Google Earth Engine has failed to initialize!")
-    except:
-        print("Unexpected eror:{}".format(sys.exc_info()[0]))
-        raise
-
 """
-#CLOUD_COVER	INT
+CLOUD_COVER	INT
 Percentage cloud cover, -1 = not calculated. (Obtained from raw Landsat metadata)
 CLOUD_COVER_LAND	INT
 Percentage cloud cover over land, -1 = not calculated. (Obtained from raw Landsat metadata)
@@ -61,25 +54,28 @@ WRS row number of scene
 """
 
 def map_landsat_properties(img):
-    # ee_img = ee.Image(img)
-    CLOUD_COVER = ee.Image(img).get("CLOUD_COVER")
-    CLOUD_COVER_LAND = ee.Image(img).get("CLOUD_COVER_LAND")
-    EARTH_SUN_DISTANCE = ee.Image(img).get("EARTH_SUN_DISTANCE")
-    LANDSAT_ID = ee.Image(img).get("LANDSAT_ID")
-    PIXEL_QA_VERSION = ee.Image(img).get("PIXEL_QA_VERSION")
-    SENSING_TIME = ee.Image(img).get("SENSING_TIME")
-    return ee.Feature(None, {
-        "CLOUD_COVER":CLOUD_COVER,
-        "CLOUD_COVER_LAND":CLOUD_COVER_LAND,
-        "EARTH_SUN_DISTANCE":EARTH_SUN_DISTANCE,
-        "LANDSAT_ID":LANDSAT_ID,
-        "PIXEL_QA_VERSION":PIXEL_QA_VERSION,
-        "SENSING_TIME":SENSING_TIME
-    })
+    property_names = ee.Image(img).propertyNames()
+    properties_val = property_names.map(lambda prop: ee.Image(img).get(prop))
+    properties_dict = ee.Dictionary.fromLists(property_names,properties_val)
+    removed_keys_list = ee.List(["system:bands","system:band_names","system:footprint"])
+    properties_dict = properties_dict.remove(removed_keys_list) # remove keys
+    return ee.Feature(None,properties_dict)
 
 def check_thailand_intersect_polygon(feature,geometry):
     contain = feature.contains(geometry)
     return ee.Feature(None,{"contain":contain})
+
+
+def init_ggee():
+    try:
+        ee.Initialize()
+        print("Google Earth Engine has successfully initialized!")
+    except ee.EEException:
+        ee.Authenticate()
+        print("Google Earth Engine has failed to initialize!")
+    except:
+        print("Unexpected eror:{}".format(sys.exc_info()[0]))
+        raise
 
 """
 RESPONSE CODE
@@ -104,13 +100,13 @@ if __name__ == "__main__":
             coordinates = geo_json["coordinates"]
             geoJSON_polygon = ee.Geometry.Polygon(coordinates) # Create polygon from geoJSON
             # Check if the polygon is in Thailand or not
-            # if not return code 500 and raise error
+            # if not return code 422 and raise error
             features = THAILAND_GEOM.map(lambda feature:check_thailand_intersect_polygon(feature,geoJSON_polygon))
             features_size = features.size()
             features = features.toList(features_size)
             features_list = features.getInfo()
             polygon_in_thailand = True
-            print(features_list)
+            # print(features_list)
             for r in features_list:
                 contain = r["properties"]["contain"]
                 polygon_in_thailand &= contain
@@ -118,13 +114,16 @@ if __name__ == "__main__":
                 print("POLYGON IS NOT IN THAILAND")
                 return jsonify({"message":"Your Input polygon is not in thailand.Please try again."}), 422
             print("POLYGON IS IN THAILAND")
-            dataset = ee.ImageCollection('LANDSAT/LC08/C01/T1_SR')\
+            dataset = ee.ImageCollection(IMAGE_COLLECTION)\
                     .filterBounds(geoJSON_polygon)\
                   .filterDate(start_date, end_date)
-            results = dataset.map(lambda img: map_landsat_properties(img))
-            collection_size = results.size()
-            plist = results.toList(collection_size)
-            plist = plist.getInfo()
+            results = dataset.map(lambda img: map_landsat_properties(img))  # map data from each sensing time
+            collection_size = results.size()  # get collection size
+            collection_size = collection_size.toInt().getInfo() # convert server variable to python int
+            if collection_size == 0 : # "given date interval does not exist in the dataset"
+                return jsonify({"error":"Given date interval does not exist in the dataset.Please try again."}),422
+            plist = results.toList(collection_size) # convert to ee.List
+            plist = plist.getInfo() # convert to python list
             sorted(plist,key=lambda d: d["properties"]["SENSING_TIME"],reverse=True) # sort from sensing time by ascending order
             response_data = {"message":"success","data":plist}
             return jsonify(response_data), 200
@@ -133,4 +132,5 @@ if __name__ == "__main__":
             return jsonify(response_data),500
 
 
-    app.run(host="172.17.1.56",port=9999,debug=True,threaded=True,use_reloader=False)
+#    app.run(host=IP,port=PORT,debug=True,threaded=True,use_reloader=False)
+    app.run(host="0.0.0.0",port=3000,debug=True,threaded=True,use_reloader=False)
