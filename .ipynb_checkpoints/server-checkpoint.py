@@ -2,11 +2,12 @@ import time
 from flask import Flask,Response,request,jsonify
 import ee
 import json
+# from constants import THAILAND_BOUNDS,COLLECTION_NAME
 import sys
 # import os
 
 
-FEATURE_COLLECTION = 'USDOS/LSIB_SIMPLE/2017'
+FEARURE_COLLECTION = 'USDOS/LSIB_SIMPLE/2017'
 IMAGE_COLLECTION = 'LANDSAT/LC08/C01/T1_SR'
 VIS_PARAMS = {
   "bands": ['B4', 'B3', 'B2'],
@@ -86,16 +87,16 @@ RESPONSE CODE
 if __name__ == "__main__":
     app = Flask(__name__)
     init_ggee() # try to initialize earth engine
-    THAILAND_GEOM = ee.FeatureCollection(FEATURE_COLLECTION).filterMetadata('country_co', 'equals', 'TH') # geometry of THAILAND_GEOM
+    THAILAND_GEOM = ee.FeatureCollection(FEARURE_COLLECTION).filterMetadata('country_co', 'equals', 'TH') # geometry of THAILAND_GEOM
     @app.route("/api/v1/th/get/landsatData",methods=["POST"])
     def get_data_from_sat():
         try:
-            data = request.json
-            geo_json = data.get("geo_json")
-            start_date = data.get("start_date")
-            end_date = data.get("end_date")
-            geom_type = geo_json.get("type") # type of geojson
-            coordinates = geo_json.get("coordinates") # list of polygon coodinates
+            geo_json = request.form.get("geo_json")
+            start_date = request.form.get("start_date")
+            end_date = request.form.get("end_date")
+            geo_json = json.loads(geo_json) # json parse string
+            geom_type = geo_json["type"]
+            coordinates = geo_json["coordinates"]
             geoJSON_polygon = ee.Geometry.Polygon(coordinates) # Create polygon from geoJSON
             # Check if the polygon is in Thailand or not
             # if not return code 422 and raise error
