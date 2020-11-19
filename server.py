@@ -83,6 +83,7 @@ RESPONSE CODE
 422 - INVALID INPUT
 """
 
+
 if __name__ == "__main__":
     app = Flask(__name__)
     init_ggee() # try to initialize earth engine
@@ -90,7 +91,11 @@ if __name__ == "__main__":
     @app.route("/api/v1/th/get/landsatData",methods=["POST"])
     def get_data_from_sat():
         try:
-            data = request.json
+            if request.json is not None: # if data is sent as json data
+                data = request.json
+            else:
+                data = request.form.to_dict()
+                data["geo_json"] = json.loads(data["geo_json"])
             geo_json = data.get("geo_json")
             start_date = data.get("start_date")
             end_date = data.get("end_date")
